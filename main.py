@@ -13,6 +13,10 @@ file_path = "job-ads.txt"
 results = {
     "Naive": {"time": 0, "pairs": set(), "false_positives": set()},
     "LSH": {"time": 0, "pairs": set(), "false_positives": set()},
+    "MinHash": {"time": 0, "pairs": set(), "false_positives": set()},
+    "MinHashFilter": {"time": 0, "pairs": set(), "false_positives": set()},
+    "LSHFilter": {"time": 0, "pairs": set(), "false_positives": set()},
+
 }
 
 # Threshold as described in Problem 3
@@ -149,6 +153,9 @@ def lsh_strategy(shingle_sets, minhash_signatures, lsh, threshold):
     print("Applying LSH strategy...")
     start_time = time.perf_counter()
     pairs = set()
+    # Insert minhash signatures into the LSH object
+    for doc_id, minhash_signature in enumerate(minhash_signatures):
+        lsh.insert(doc_id, minhash_signature)
 
     for doc_id, minhash_signature in enumerate(minhash_signatures):
         candidates = lsh.query(minhash_signature)
@@ -164,7 +171,7 @@ def lsh_strategy(shingle_sets, minhash_signatures, lsh, threshold):
                         pairs.add(frozenset([doc_id, candidate_id]))
 
     end_time = time.perf_counter()
-    return {"time": end_time - start_time, "pairs": pairs}
+    return {"time": end_time - start_time, "pairs": pairs, "false_positives": set()}
 
 def naive_strategy(shingle_sets, threshold):
     print("Applying Naive strategy...")
@@ -182,61 +189,177 @@ def naive_strategy(shingle_sets, threshold):
                 false_positives += 1
 
     end_time = time.perf_counter()
-    return {"time": end_time - start_time, "pairs": pairs, "false_positives": 0}  # Add false_positives here
+    return {"time": end_time - start_time, "pairs": pairs, "false_positives": set()}
 # Implement other strategy functions similarly...
+def minhashing_strategy(shingle_sets, minhash_signatures, threshold):
+    print("Applying Minhashing strategy...")
+    start_time = time.perf_counter()
+    pairs = set()
+
+    for i, minhash_a in enumerate(minhash_signatures):
+        for j, minhash_b in enumerate(minhash_signatures[i+1:]):
+            jaccard_estimate = estimate_jaccard_similarity(minhash_a, minhash_b)
+
+            if jaccard_estimate >= threshold:
+                pairs.add(frozenset([i, j+i+1]))
+
+    end_time = time.perf_counter()
+    return {"time": end_time - start_time, "pairs": pairs, "false_positives": set()}
 
 
+def minhashing_filtering_strategy(shingle_sets, minhash_signatures, threshold):
+    print("Applying Minhashing (Filtering) strategy...")
+    start_time = time.perf_counter()
+    pairs = set()
+
+    for i, minhash_a in enumerate(minhash_signatures):
+        for j, minhash_b in enumerate(minhash_signatures[i+1:]):
+            jaccard_estimate = estimate_jaccard_similarity(minhash_a, minhash_b)
+
+            if jaccard_estimate >= threshold:
+                actual_jaccard = jaccard_similarity(shingle_sets[i], shingle_sets[j+i+1])
+
+                if actual_jaccard >= threshold:
+                    pairs.add(frozenset([i, j+i+1]))
+
+    end_time = time.perf_counter()
+    return {"time": end_time - start_time, "pairs": pairs, "false_positives": set()}
+
+def lsh_filtering_strategy(shingle_sets, minhash_signatures, lsh, threshold):
+    print("Applying LSH (Filtering) strategy...")
+    start_time = time.perf_counter()
+    pairs = set()
+
+    for doc_id, minhash_signature in enumerate(minhash_signatures):
+        lsh.insert(doc_id, minhash_signature)
+
+    for doc_id, minhash_signature in enumerate(minhash_signatures):
+        candidates = lsh.query(minhash_signature)
+
+        for candidate_id in candidates:
+            if doc_id != candidate_id:
+                actual_jaccard = jaccard_similarity(shingle_sets[doc_id], shingle_sets[candidate_id])
+
+                if actual_jaccard >= threshold:
+                    pairs.add(frozenset([doc_id, candidate_id]))
+
+    end_time = time.perf_counter()
+    return {"time": end_time - start_time, "pairs": pairs, "false_positives": set()}
+
+def run_all_strategies(strategies, shingle_sets, minhash_signatures, lsh, threshold):
+    results = {}
+    for strategy_id, strategy in strategies.items():
+        print(f"Running Strategy {strategy_id}")
+        if strategy_id == 1:
+            result = strategy(shingle_sets, threshold)
+        elif strategy_id == 2:
+            result = strategy(shingle_sets, minhash_signatures, lsh, threshold)
+        elif strategy_id in [3, 4]:
+            result = strategy(shingle_sets, minhash_signatures, threshold)
+        elif strategy_id == 5:
+            result = strategy(shingle_sets, minhash_signatures, lsh, threshold)
+        results[strategy_id] = result
+    return results
 
 strategies = {
     1: naive_strategy,
     2: lsh_strategy,
+    3: minhashing_strategy,
+    4: minhashing_filtering_strategy,
+    5: lsh_filtering_strategy,
+    6: run_all_strategies,
 }
 
 
-def plot_data(results):
-    strategies = list(results.keys())
-    times = [results[strategy]["time"] for strategy in strategies]
-    pairs = [len(results[strategy]["pairs"]) for strategy in strategies]
-    false_positives = [len(results[strategy]["false_positives"]) for strategy in strategies]
+def plot_all_data(results):
+    # Remove the "Run all strategies" result
 
-    x = list(range(len(strategies)))
+    strategy_names = [name for name in results]
+    times = [result["time"] for result in results.values()]
+    pairs = [len(result["pairs"]) for result in results.values()]
+    false_positives = [len(result["false_positives"]) for result in results.values()]
 
     fig, ax1 = plt.subplots()
 
-    ax1.bar(x, times, label="Time", alpha=0.7)
-    ax1.set_xticks(x)
-    ax1.set_xticklabels(strategies)
+    ax1.bar(strategy_names, times, label="Time", alpha=0.7)
     ax1.set_ylabel("Time (seconds)")
 
     ax2 = ax1.twinx()
-    ax2.plot(x, pairs, "ro-", label="Pairs Found")
-    ax2.plot(x, false_positives, "bo-", label="False Positives")
+    ax2.plot(strategy_names, pairs, "ro-", label="Pairs Found")
+
+    # Check if there are any false positives
+    if any(false_positives):
+        ax2.plot(strategy_names, false_positives, "bo-", label="False Positives")
+
     ax2.set_ylabel("Number of Pairs and False Positives")
 
     ax1.legend(loc="upper left")
     ax2.legend(loc="upper right")
 
-    plt.title("Comparison of Near-Duplicate Detection Strategies")
+    plt.title("Near-Duplicate Detection")
+    plt.xticks(range(len(strategy_names)), strategy_names)  # Update the x-axis with strategy names
     plt.show()
-    plt.savefig("comparison_plot.png")
+    plt.savefig("all_strategies_plot.png")
+
+
+def plot_data(result):
+    strategy_name = list(results.keys())[chosen_strategy - 1]
+    time_taken = result["time"]
+    pairs = len(result["pairs"])
+    false_positives = len(result["false_positives"])
+
+
+    print(f"Time: {time_taken}")
+    print(f"Pairs:  {pairs}")
+    print(f"False Positives {false_positives}")
+    fig, ax1 = plt.subplots()
+
+    ax1.bar(strategy_name, time_taken, label="Time", alpha=0.7)
+    ax1.set_ylabel("Time (seconds)")
+
+    ax2 = ax1.twinx()
+    ax2.plot(strategy_name, pairs, "ro-", label="Pairs Found")
+    ax2.plot(strategy_name, false_positives, "bo-", label="False Positives")
+    ax2.set_ylabel("Number of Pairs and False Positives")
+
+    ax1.legend(loc="upper left")
+    ax2.legend(loc="upper right")
+
+    plt.title(f"{strategy_name} Near-Duplicate Detection")
+    plt.show()
+    plt.savefig(f"{strategy_name}_plot.png")
 
 # At the end of the main part of the script, add the following line:
-plot_data(results)
 
 if __name__ == "__main__":
     print("loading")
     read_file()
-    print("Choose a Strategy (1 - Naive Strategy, 2 - LSH Strategy)")
+    print("Choose a Strategy (1 - Naive Strategy, 2 - LSH Strategy, 3 - MinHash Strategy, 4 - MinHash Filtering Strategy, 5 - LSH Filtering, 6 - Run All Strategies)")
     chosen_strategy = int(input())
 
     if chosen_strategy not in strategies:
         print("Invalid choice.")
     else:
-        if chosen_strategy == 1:
-            result = strategies[chosen_strategy](shingle_sets, threshold)
-        else:
-            result = strategies[chosen_strategy](shingle_sets, minhash_signatures, lsh, threshold)
+        if chosen_strategy in [1, 2, 3, 4, 5]:
+            if chosen_strategy == 1:
+                result = strategies[chosen_strategy](shingle_sets, threshold)
+            elif chosen_strategy == 2:
+                result = strategies[chosen_strategy](shingle_sets, minhash_signatures, lsh, threshold)
+            elif chosen_strategy == 3:
+                result = strategies[chosen_strategy](shingle_sets, minhash_signatures, threshold)
+            elif chosen_strategy == 4:
+                result = strategies[chosen_strategy](shingle_sets, minhash_signatures, threshold)
+            elif chosen_strategy == 5:
+                result = strategies[chosen_strategy](shingle_sets, minhash_signatures, lsh, threshold)
+
+            plot_data(result)
+        elif chosen_strategy == 6:
+            all_results = strategies[chosen_strategy](strategies, shingle_sets, minhash_signatures, lsh, threshold)
 
 
-        plot_data(result)
+            plot_all_data(all_results)
+
+
+
+
 
