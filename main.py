@@ -16,16 +16,10 @@ results = {
     "MinHash": {"time": 0, "pairs": set(), "false_positives": set()},
     "MinHashFilter": {"time": 0, "pairs": set(), "false_positives": set()},
     "LSHFilter": {"time": 0, "pairs": set(), "false_positives": set()},
-
 }
 
 # Threshold as described in Problem 3
 threshold = 0.8
-
-
-
-
-
 
 def hash_family(i):
     # Family of hash functions
@@ -153,6 +147,7 @@ def lsh_strategy(shingle_sets, minhash_signatures, lsh, threshold):
     print("Applying LSH strategy...")
     start_time = time.perf_counter()
     pairs = set()
+    false_positives = set()
     # Insert minhash signatures into the LSH object
     for doc_id, minhash_signature in enumerate(minhash_signatures):
         lsh.insert(doc_id, minhash_signature)
@@ -169,15 +164,17 @@ def lsh_strategy(shingle_sets, minhash_signatures, lsh, threshold):
 
                     if actual_jaccard >= threshold:
                         pairs.add(frozenset([doc_id, candidate_id]))
+                    else:
+                        false_positives.add(frozenset([doc_id, candidate_id]))
 
     end_time = time.perf_counter()
-    return {"time": end_time - start_time, "pairs": pairs, "false_positives": set()}
+    return {"time": end_time - start_time, "pairs": pairs, "false_positives": false_positives}
 
 def naive_strategy(shingle_sets, threshold):
     print("Applying Naive strategy...")
     start_time = time.perf_counter()
     pairs = set()
-    false_positives = 0
+    false_positives = set()
 
     for i, shingles_a in enumerate(tqdm(shingle_sets, desc="Naive Strategy")):
         for j, shingles_b in enumerate(shingle_sets[i+1:]):  # Start from i+1 to avoid duplicate pairs
@@ -186,33 +183,38 @@ def naive_strategy(shingle_sets, threshold):
             if jaccard_sim >= threshold:
                 pairs.add(frozenset([i, j+i+1]))
             else:
-                false_positives += 1
+                false_positives.add(frozenset([i, j + i + 1]))
 
     end_time = time.perf_counter()
-    return {"time": end_time - start_time, "pairs": pairs, "false_positives": set()}
+    return {"time": end_time - start_time, "pairs": pairs, "false_positives": false_positives}
 # Implement other strategy functions similarly...
 def minhashing_strategy(shingle_sets, minhash_signatures, threshold):
     print("Applying Minhashing strategy...")
     start_time = time.perf_counter()
     pairs = set()
+    false_positive = set()
 
-    for i, minhash_a in enumerate(minhash_signatures):
+    for i, minhash_a in enumerate(tqdm(minhash_signatures)):
         for j, minhash_b in enumerate(minhash_signatures[i+1:]):
             jaccard_estimate = estimate_jaccard_similarity(minhash_a, minhash_b)
 
             if jaccard_estimate >= threshold:
                 pairs.add(frozenset([i, j+i+1]))
+            else:
+                false_positive.add(frozenset([i, j+i+1]))
+
 
     end_time = time.perf_counter()
-    return {"time": end_time - start_time, "pairs": pairs, "false_positives": set()}
+    return {"time": end_time - start_time, "pairs": pairs, "false_positives": false_positive}
 
 
 def minhashing_filtering_strategy(shingle_sets, minhash_signatures, threshold):
     print("Applying Minhashing (Filtering) strategy...")
     start_time = time.perf_counter()
     pairs = set()
+    false_positives = set()
 
-    for i, minhash_a in enumerate(minhash_signatures):
+    for i, minhash_a in enumerate(tqdm(minhash_signatures)):
         for j, minhash_b in enumerate(minhash_signatures[i+1:]):
             jaccard_estimate = estimate_jaccard_similarity(minhash_a, minhash_b)
 
@@ -221,16 +223,47 @@ def minhashing_filtering_strategy(shingle_sets, minhash_signatures, threshold):
 
                 if actual_jaccard >= threshold:
                     pairs.add(frozenset([i, j+i+1]))
+                else:
+                    false_positives.add(frozenset([i, j+i+1]))
 
     end_time = time.perf_counter()
-    return {"time": end_time - start_time, "pairs": pairs, "false_positives": set()}
+    return {"time": end_time - start_time, "pairs": pairs, "false_positives": false_positives}
+
+import json
+
+def log_results(results, log_file_path):
+
+
+    print("called me")
+    # Convert any sets in the results dictionary to lists
+    def convert_sets(obj):
+        if isinstance(obj, set):
+            return list(obj)
+        elif isinstance(obj, dict):
+            return {k: convert_sets(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [convert_sets(item) for item in obj]
+        else:
+            return obj
+
+
+    results = convert_sets(results)
+
+    print(results)
+
+    with open(log_file_path, "w") as log_file:
+        json.dump(results, log_file, indent=4, sort_keys=True)
+
+    for key, value in results.items():
+        print(f"{key}: {value}")
 
 def lsh_filtering_strategy(shingle_sets, minhash_signatures, lsh, threshold):
     print("Applying LSH (Filtering) strategy...")
     start_time = time.perf_counter()
     pairs = set()
+    false_positives = set()
 
-    for doc_id, minhash_signature in enumerate(minhash_signatures):
+    for doc_id, minhash_signature in enumerate(tqdm(minhash_signatures)):
         lsh.insert(doc_id, minhash_signature)
 
     for doc_id, minhash_signature in enumerate(minhash_signatures):
@@ -242,11 +275,16 @@ def lsh_filtering_strategy(shingle_sets, minhash_signatures, lsh, threshold):
 
                 if actual_jaccard >= threshold:
                     pairs.add(frozenset([doc_id, candidate_id]))
+                else:
+                    false_positives.add(frozenset([doc_id, candidate_id]))
 
     end_time = time.perf_counter()
-    return {"time": end_time - start_time, "pairs": pairs, "false_positives": set()}
+    return {"time": end_time - start_time, "pairs": pairs, "false_positives": false_positives}
 
 def run_all_strategies(strategies, shingle_sets, minhash_signatures, lsh, threshold):
+
+
+    print("called all strategies")
     results = {}
     for strategy_id, strategy in strategies.items():
         print(f"Running Strategy {strategy_id}")
@@ -258,7 +296,11 @@ def run_all_strategies(strategies, shingle_sets, minhash_signatures, lsh, thresh
             result = strategy(shingle_sets, minhash_signatures, threshold)
         elif strategy_id == 5:
             result = strategy(shingle_sets, minhash_signatures, lsh, threshold)
+        else:
+            break
+
         results[strategy_id] = result
+
     return results
 
 strategies = {
@@ -270,11 +312,10 @@ strategies = {
     6: run_all_strategies,
 }
 
-
 def plot_all_data(results):
-    # Remove the "Run all strategies" result
 
     strategy_names = [name for name in results]
+
     times = [result["time"] for result in results.values()]
     pairs = [len(result["pairs"]) for result in results.values()]
     false_positives = [len(result["false_positives"]) for result in results.values()]
@@ -353,11 +394,17 @@ if __name__ == "__main__":
                 result = strategies[chosen_strategy](shingle_sets, minhash_signatures, lsh, threshold)
 
             plot_data(result)
+            log_results(result, "experiment_log.txt")
+
         elif chosen_strategy == 6:
             all_results = strategies[chosen_strategy](strategies, shingle_sets, minhash_signatures, lsh, threshold)
 
 
+
             plot_all_data(all_results)
+
+            log_results(all_results, "experiment_log.txt")
+            exit()
 
 
 
